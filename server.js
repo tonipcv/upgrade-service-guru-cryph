@@ -2,34 +2,46 @@ require('dotenv').config();
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const bodyParser = require('body-parser');
+const axios = require('axios');
 
 const app = express();
 const prisma = new PrismaClient();
 
+// Configuração do Asaas
+const ASAAS_API_KEY = process.env.ASAAS_API_KEY;
+const ASAAS_API_URL = 'https://sandbox.asaas.com/api/v3'; // ou https://api.asaas.com/v3 para produção
+
 app.use(bodyParser.json());
+
+async function getAsaasCustomer(customerId) {
+  try {
+    const response = await axios.get(`${ASAAS_API_URL}/customers/${customerId}`, {
+      headers: {
+        'access_token': ASAAS_API_KEY
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Erro ao buscar cliente no Asaas:', error);
+    throw error;
+  }
+}
 
 app.post('/webhook/asaas', async (req, res) => {
   console.log('Requisição recebida no webhook');
   console.log('Body completo:', JSON.stringify(req.body, null, 2));
   try {
-    const { event, payment, subscription, customer } = req.body;
-    console.log('Webhook recebido:', { event, payment, subscription, customer });
+    const { event, payment } = req.body;
 
     // Validar dados recebidos
-    if (!event || !customer || !customer.email) {
+    if (!event || !payment || !payment.customer) {
       console.log('Dados inválidos recebidos:', req.body);
       return res.status(400).send('Dados inválidos');
     }
 
-    // Log do email antes e depois do toLowerCase
-    console.log('Email original:', customer.email);
-    console.log('Email em lowercase:', customer.email.toLowerCase());
-
-    // Primeiro, vamos verificar todos os usuários no banco
-    const allUsers = await prisma.user.findMany({
-      select: { id: true, email: true }
-    });
-    console.log('Todos os usuários:', JSON.stringify(allUsers, null, 2));
+    // Buscar dados completos do cliente no Asaas
+    const customer = await getAsaasCustomer(payment.customer);
+    console.log('Cliente encontrado no Asaas:', customer);
 
     // Verificar se existe usuário com este email
     const existingUser = await prisma.user.findUnique({
@@ -37,9 +49,6 @@ app.post('/webhook/asaas', async (req, res) => {
       select: { id: true, email: true }
     });
     
-    console.log('Tentando encontrar usuário com email:', customer.email);
-    console.log('Usuário encontrado:', existingUser);
-
     if (!existingUser) {
       console.log(`Nenhum usuário encontrado com email: ${customer.email}`);
       return res.status(404).send('Usuário não encontrado');
@@ -49,11 +58,17 @@ app.post('/webhook/asaas', async (req, res) => {
     let subscriptionStatus = 'free';
     let subscriptionEndDate = null;
 
-    if (event === 'SUBSCRIPTION_ACTIVATED' || event === 'PAYMENT_CONFIRMED') {
+    if (event === 'PAYMENT_CONFIRMED') {
       subscriptionStatus = 'premium';
-      subscriptionEndDate = new Date(subscription?.nextDueDate || payment?.dueDate);
-    } else if (event === 'SUBSCRIPTION_CANCELED' || event === 'PAYMENT_OVERDUE') {
+      subscriptionEndDate = new Date(payment.dueDate);
+      subscriptionEndDate.setFullYear(subscriptionEndDate.getFullYear() + 1);
+    } else if (event === 'PAYMENT_OVERDUE' || event === 'PAYMENT_CANCELED') {
       subscriptionStatus = 'free';
+    }
+
+    if (event === 'PAYMENT_CREATED') {
+      console.log('Pagamento criado, aguardando confirmação');
+      return res.status(200).send('Webhook processado com sucesso');
     }
 
     // Atualizar usuário no banco de dados
@@ -62,7 +77,7 @@ app.post('/webhook/asaas', async (req, res) => {
       data: {
         subscriptionStatus,
         subscriptionEndDate,
-        subscriptionId: subscription?.id || payment?.id
+        subscriptionId: payment.id
       },
     });
 
