@@ -29,14 +29,20 @@ async function getAsaasCustomer(customerId) {
 
 app.post('/webhook/asaas', async (req, res) => {
   console.log('Requisição recebida no webhook');
-  console.log('Body completo:', JSON.stringify(req.body, null, 2));
   try {
     const { event, payment } = req.body;
+    console.log('Webhook recebido:', { event, payment });
 
     // Validar dados recebidos
     if (!event || !payment || !payment.customer) {
       console.log('Dados inválidos recebidos:', req.body);
       return res.status(400).send('Dados inválidos');
+    }
+
+    // Se for PAYMENT_CREATED, apenas logamos e retornamos sucesso
+    if (event === 'PAYMENT_CREATED') {
+      console.log('Pagamento criado, aguardando confirmação');
+      return res.status(200).send('Webhook processado com sucesso');
     }
 
     // Buscar dados completos do cliente no Asaas
@@ -58,30 +64,28 @@ app.post('/webhook/asaas', async (req, res) => {
     let subscriptionStatus = 'free';
     let subscriptionEndDate = null;
 
-    if (event === 'PAYMENT_CONFIRMED') {
+    if (event === 'PAYMENT_CONFIRMED' || event === 'PAYMENT_RECEIVED') {
       subscriptionStatus = 'premium';
-      subscriptionEndDate = new Date(payment.dueDate);
-      subscriptionEndDate.setFullYear(subscriptionEndDate.getFullYear() + 1);
-    } else if (event === 'PAYMENT_OVERDUE' || event === 'PAYMENT_CANCELED') {
+      const dueDate = new Date(payment.dueDate);
+      subscriptionEndDate = new Date(dueDate.setFullYear(dueDate.getFullYear() + 1));
+    } else if (event === 'PAYMENT_OVERDUE' || event === 'PAYMENT_CANCELED' || event === 'PAYMENT_DELETED') {
       subscriptionStatus = 'free';
     }
 
-    if (event === 'PAYMENT_CREATED') {
-      console.log('Pagamento criado, aguardando confirmação');
-      return res.status(200).send('Webhook processado com sucesso');
+    // Atualizar usuário no banco de dados apenas se não for PAYMENT_CREATED
+    if (event !== 'PAYMENT_CREATED') {
+      const updatedUser = await prisma.user.update({
+        where: { email: customer.email.toLowerCase() },
+        data: {
+          subscriptionStatus,
+          subscriptionEndDate,
+          subscriptionId: payment.id
+        },
+      });
+
+      console.log(`Usuário ${customer.email} atualizado para status: ${subscriptionStatus}`);
     }
 
-    // Atualizar usuário no banco de dados
-    const updatedUser = await prisma.user.update({
-      where: { email: customer.email.toLowerCase() },
-      data: {
-        subscriptionStatus,
-        subscriptionEndDate,
-        subscriptionId: payment.id
-      },
-    });
-
-    console.log(`Usuário ${customer.email} atualizado para status: ${subscriptionStatus}`);
     res.status(200).send('Webhook processado com sucesso');
   } catch (error) {
     console.error('Erro ao processar webhook:', error);
