@@ -44,28 +44,22 @@ app.post('/webhook/asaas', async (req, res) => {
     const customer = await getAsaasCustomer(customerId);
     console.log('Cliente encontrado no Asaas:', customer);
 
-    // Função para validar email
-    const isValidEmail = (email) => {
-      return email && email.includes('@') && email.includes('.');
-    };
-
-    // Tentar encontrar o email correto do usuário
-    let userEmail = payment?.externalReference || subscription?.externalReference;
-    if (!isValidEmail(userEmail)) {
-      userEmail = customer.email;
-    }
+    // Usar o email do cliente do Asaas diretamente
+    const userEmail = customer.email;
     console.log('Email do usuário para busca:', userEmail);
 
     // Verificar se existe usuário com este email
     const existingUser = await prisma.user.findUnique({
       where: { email: userEmail.toLowerCase() },
-      select: { id: true, email: true }
+      select: { id: true, email: true, subscriptionStatus: true }
     });
     
     if (!existingUser) {
       console.log(`Nenhum usuário encontrado com email: ${userEmail}`);
       return res.status(404).send('Usuário não encontrado');
     }
+
+    console.log('Usuário encontrado:', existingUser);
 
     // Determinar novo status de assinatura baseado no evento
     let subscriptionStatus = 'free';
@@ -84,7 +78,7 @@ app.post('/webhook/asaas', async (req, res) => {
         subscriptionId = payment?.id || subscription?.id;
         
         // Atualizar usuário para premium
-        await prisma.user.update({
+        const updatedUser = await prisma.user.update({
           where: { email: userEmail.toLowerCase() },
           data: {
             subscriptionStatus,
@@ -92,7 +86,7 @@ app.post('/webhook/asaas', async (req, res) => {
             subscriptionId
           },
         });
-        console.log(`Usuário ${userEmail} atualizado para premium`);
+        console.log(`Usuário ${userEmail} atualizado para premium:`, updatedUser);
         break;
 
       // Eventos de cancelamento ou problema
@@ -126,13 +120,15 @@ app.post('/webhook/asaas', async (req, res) => {
         console.log(`Evento não tratado: ${event}`);
     }
 
-    console.log('Dados do cliente Asaas:', {
-      name: customer.name,
-      email: customer.email,
-      phone: customer.phone,
-      mobilePhone: customer.mobilePhone,
+    console.log('Dados finais:', {
+      customer: {
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone
+      },
       event,
-      status: subscriptionStatus
+      status: subscriptionStatus,
+      endDate: subscriptionEndDate
     });
 
     res.status(200).send('Webhook processado com sucesso');
@@ -179,6 +175,15 @@ app.get('/test-db', async (req, res) => {
 
 app.get('/ping', (req, res) => {
   res.json({ message: 'pong' });
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    service: 'cryph-webhook',
+    database: 'connected'
+  });
 });
 
 const PORT = process.env.PORT || 3000;
