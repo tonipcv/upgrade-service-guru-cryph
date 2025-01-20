@@ -30,61 +30,105 @@ async function getAsaasCustomer(customerId) {
 app.post('/webhook/asaas', async (req, res) => {
   console.log('Requisição recebida no webhook');
   try {
-    const { event, payment } = req.body;
-    console.log('Webhook recebido:', { event, payment });
+    const { event, payment, subscription } = req.body;
+    console.log('Webhook recebido:', { event, payment, subscription });
 
     // Validar dados recebidos
-    if (!event || !payment || !payment.customer) {
+    if (!event || (!payment && !subscription)) {
       console.log('Dados inválidos recebidos:', req.body);
       return res.status(400).send('Dados inválidos');
     }
 
-    // Se for PAYMENT_CREATED, apenas logamos e retornamos sucesso
-    if (event === 'PAYMENT_CREATED') {
-      console.log('Pagamento criado, aguardando confirmação');
-      return res.status(200).send('Webhook processado com sucesso');
-    }
-
     // Buscar dados completos do cliente no Asaas
-    const customer = await getAsaasCustomer(payment.customer);
+    const customerId = payment?.customer || subscription?.customer;
+    const customer = await getAsaasCustomer(customerId);
     console.log('Cliente encontrado no Asaas:', customer);
+
+    // Tentar encontrar usuário primeiro pelo externalReference, depois pelo email do cliente
+    let userEmail = payment?.externalReference || subscription?.externalReference;
+    if (!userEmail) {
+      userEmail = customer.email;
+    }
+    console.log('Email do usuário:', userEmail);
 
     // Verificar se existe usuário com este email
     const existingUser = await prisma.user.findUnique({
-      where: { email: customer.email.toLowerCase() },
+      where: { email: userEmail.toLowerCase() },
       select: { id: true, email: true }
     });
     
     if (!existingUser) {
-      console.log(`Nenhum usuário encontrado com email: ${customer.email}`);
+      console.log(`Nenhum usuário encontrado com email: ${userEmail}`);
       return res.status(404).send('Usuário não encontrado');
     }
 
-    // Determinar novo status de assinatura
+    // Determinar novo status de assinatura baseado no evento
     let subscriptionStatus = 'free';
     let subscriptionEndDate = null;
+    let subscriptionId = null;
 
-    if (event === 'PAYMENT_CONFIRMED' || event === 'PAYMENT_RECEIVED') {
-      subscriptionStatus = 'premium';
-      const dueDate = new Date(payment.dueDate);
-      subscriptionEndDate = new Date(dueDate.setFullYear(dueDate.getFullYear() + 1));
-    } else if (event === 'PAYMENT_OVERDUE' || event === 'PAYMENT_CANCELED' || event === 'PAYMENT_DELETED') {
-      subscriptionStatus = 'free';
+    // Priorizar eventos por importância
+    switch (event) {
+      // Eventos de pagamento confirmado
+      case 'PAYMENT_CONFIRMED':
+      case 'PAYMENT_RECEIVED':
+      case 'SUBSCRIPTION_ACTIVATED':
+        subscriptionStatus = 'premium';
+        const dueDate = new Date(payment?.dueDate || subscription?.nextDueDate);
+        subscriptionEndDate = new Date(dueDate.setFullYear(dueDate.getFullYear() + 1));
+        subscriptionId = payment?.id || subscription?.id;
+        
+        // Atualizar usuário para premium
+        await prisma.user.update({
+          where: { email: userEmail.toLowerCase() },
+          data: {
+            subscriptionStatus,
+            subscriptionEndDate,
+            subscriptionId
+          },
+        });
+        console.log(`Usuário ${userEmail} atualizado para premium`);
+        break;
+
+      // Eventos de cancelamento ou problema
+      case 'PAYMENT_OVERDUE':
+      case 'PAYMENT_CANCELED':
+      case 'PAYMENT_DELETED':
+      case 'SUBSCRIPTION_CANCELED':
+      case 'SUBSCRIPTION_DELETED':
+      case 'SUBSCRIPTION_EXPIRED':
+        subscriptionStatus = 'free';
+        
+        // Atualizar usuário para free
+        await prisma.user.update({
+          where: { email: userEmail.toLowerCase() },
+          data: {
+            subscriptionStatus,
+            subscriptionEndDate: null,
+            subscriptionId: null
+          },
+        });
+        console.log(`Usuário ${userEmail} retornado para free`);
+        break;
+
+      // Eventos informativos
+      case 'PAYMENT_CREATED':
+      case 'SUBSCRIPTION_CREATED':
+        console.log('Pagamento/Assinatura criada, aguardando confirmação');
+        break;
+
+      default:
+        console.log(`Evento não tratado: ${event}`);
     }
 
-    // Atualizar usuário no banco de dados apenas se não for PAYMENT_CREATED
-    if (event !== 'PAYMENT_CREATED') {
-      const updatedUser = await prisma.user.update({
-        where: { email: customer.email.toLowerCase() },
-        data: {
-          subscriptionStatus,
-          subscriptionEndDate,
-          subscriptionId: payment.id
-        },
-      });
-
-      console.log(`Usuário ${customer.email} atualizado para status: ${subscriptionStatus}`);
-    }
+    console.log('Dados do cliente Asaas:', {
+      name: customer.name,
+      email: customer.email,
+      phone: customer.phone,
+      mobilePhone: customer.mobilePhone,
+      event,
+      status: subscriptionStatus
+    });
 
     res.status(200).send('Webhook processado com sucesso');
   } catch (error) {
