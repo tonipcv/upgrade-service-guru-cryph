@@ -18,13 +18,20 @@ const asaasApi = axios.create({
   baseURL: ASAAS_API_URL,
   headers: {
     'Content-Type': 'application/json',
-    'Authorization': ASAAS_API_KEY
+    'access_token': ASAAS_API_KEY
   }
 });
 
-// Usar o cliente Axios configurado
+// Função melhorada para debug
 async function getAsaasCustomer(customerId) {
   try {
+    console.log('Fazendo requisição para Asaas:', {
+      url: `${ASAAS_API_URL}/customers/${customerId}`,
+      headers: {
+        'access_token': ASAAS_API_KEY
+      }
+    });
+
     const response = await asaasApi.get(`/customers/${customerId}`);
     return response.data;
   } catch (error) {
@@ -32,7 +39,8 @@ async function getAsaasCustomer(customerId) {
       status: error.response?.status,
       data: error.response?.data,
       customerId,
-      apiKey: ASAAS_API_KEY?.substring(0, 10) + '...'
+      url: `${ASAAS_API_URL}/customers/${customerId}`,
+      headers: asaasApi.defaults.headers
     });
     
     if (error.response?.status === 404) {
