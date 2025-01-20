@@ -13,16 +13,31 @@ const ASAAS_API_URL = 'https://sandbox.asaas.com/api/v3'; // ou https://api.asaa
 
 app.use(bodyParser.json());
 
+// Atualizar a configuração do Axios para o Asaas
+const asaasApi = axios.create({
+  baseURL: ASAAS_API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': ASAAS_API_KEY
+  }
+});
+
+// Usar o cliente Axios configurado
 async function getAsaasCustomer(customerId) {
   try {
-    const response = await axios.get(`${ASAAS_API_URL}/customers/${customerId}`, {
-      headers: {
-        'access_token': ASAAS_API_KEY
-      }
-    });
+    const response = await asaasApi.get(`/customers/${customerId}`);
     return response.data;
   } catch (error) {
-    console.error('Erro ao buscar cliente no Asaas:', error);
+    console.error('Erro ao buscar cliente no Asaas:', {
+      status: error.response?.status,
+      data: error.response?.data,
+      customerId,
+      apiKey: ASAAS_API_KEY?.substring(0, 10) + '...'
+    });
+    
+    if (error.response?.status === 404) {
+      return null;
+    }
     throw error;
   }
 }
@@ -39,10 +54,14 @@ app.post('/webhook/asaas', async (req, res) => {
       return res.status(400).send('Dados inválidos');
     }
 
-    // Buscar dados completos do cliente no Asaas
+    // Buscar dados do cliente
     const customerId = payment?.customer || subscription?.customer;
     const customer = await getAsaasCustomer(customerId);
-    console.log('Cliente encontrado no Asaas:', customer);
+    
+    if (!customer) {
+      console.log(`Cliente não encontrado no Asaas: ${customerId}`);
+      return res.status(404).send('Cliente não encontrado');
+    }
 
     // Usar o email do cliente do Asaas diretamente
     const userEmail = customer.email;
@@ -71,7 +90,7 @@ app.post('/webhook/asaas', async (req, res) => {
       // Eventos de pagamento confirmado
       case 'PAYMENT_CONFIRMED':
       case 'PAYMENT_RECEIVED':
-      case 'SUBSCRIPTION_ACTIVATED':
+      case 'SUBSCRIPTION_CREATED':
         subscriptionStatus = 'premium';
         const dueDate = new Date(payment?.dueDate || subscription?.nextDueDate);
         subscriptionEndDate = new Date(dueDate.setFullYear(dueDate.getFullYear() + 1));
@@ -93,9 +112,9 @@ app.post('/webhook/asaas', async (req, res) => {
       case 'PAYMENT_OVERDUE':
       case 'PAYMENT_CANCELED':
       case 'PAYMENT_DELETED':
-      case 'SUBSCRIPTION_CANCELED':
       case 'SUBSCRIPTION_DELETED':
-      case 'SUBSCRIPTION_EXPIRED':
+      case 'SUBSCRIPTION_INACTIVATED':
+      case 'SUBSCRIPTION_SPLIT_DIVERGENCE_BLOCK':
         subscriptionStatus = 'free';
         
         // Atualizar usuário para free
@@ -110,10 +129,12 @@ app.post('/webhook/asaas', async (req, res) => {
         console.log(`Usuário ${userEmail} retornado para free`);
         break;
 
-      // Eventos informativos
-      case 'PAYMENT_CREATED':
-      case 'SUBSCRIPTION_CREATED':
-        console.log('Pagamento/Assinatura criada, aguardando confirmação');
+      // Eventos informativos que não alteram status
+      case 'SUBSCRIPTION_UPDATED':
+      case 'SUBSCRIPTION_SPLIT_DISABLED':
+      case 'SUBSCRIPTION_SPLIT_DIVERGENCE_BLOCK_FINISHED':
+        console.log(`Evento informativo recebido: ${event}`);
+        console.log('Dados do evento:', { subscription });
         break;
 
       default:
