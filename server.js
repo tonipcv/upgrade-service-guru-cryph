@@ -44,12 +44,17 @@ app.post('/webhook/asaas', async (req, res) => {
     const customer = await getAsaasCustomer(customerId);
     console.log('Cliente encontrado no Asaas:', customer);
 
-    // Tentar encontrar usuário primeiro pelo externalReference, depois pelo email do cliente
+    // Função para validar email
+    const isValidEmail = (email) => {
+      return email && email.includes('@') && email.includes('.');
+    };
+
+    // Tentar encontrar o email correto do usuário
     let userEmail = payment?.externalReference || subscription?.externalReference;
-    if (!userEmail) {
+    if (!isValidEmail(userEmail)) {
       userEmail = customer.email;
     }
-    console.log('Email do usuário:', userEmail);
+    console.log('Email do usuário para busca:', userEmail);
 
     // Verificar se existe usuário com este email
     const existingUser = await prisma.user.findUnique({
