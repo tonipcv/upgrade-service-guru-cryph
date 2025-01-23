@@ -452,44 +452,24 @@ let isShuttingDown = false;
 async function shutdown(signal) {
     logger.info(`Recebido sinal: ${signal}`);
     
-    if (isShuttingDown) {
-        logger.info('Shutdown já em andamento...');
-        return;
-    }
-    
-    isShuttingDown = true;
-    logger.info('Iniciando processo de shutdown...');
-    
     try {
-        // Log do estado atual
-        logger.info('Estado atual do servidor:');
-        logger.info(`- Conexões ativas: ${server.connections}`);
-        logger.info(`- Memória:`, process.memoryUsage());
-        
-        // Fechar servidor HTTP
-        server.close(() => {
-            logger.info('Servidor HTTP fechado com sucesso');
-        });
-        
-        // Aguardar conexões finalizarem
-        logger.info('Aguardando conexões existentes...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        // Desconectar Prisma
-        logger.info('Desconectando Prisma...');
+        // Desconectar Prisma imediatamente
         await prisma.$disconnect();
-        logger.info('Prisma desconectado com sucesso');
+        logger.info('Prisma desconectado');
         
-        // Fechar arquivo de log
-        logger.info('Finalizando logs...');
-        logStream.end();
+        // Forçar encerramento após 10 segundos
+        setTimeout(() => {
+            logger.info('Forçando encerramento');
+            process.exit(0);
+        }, 10000);
         
-        // Aguardar logs serem escritos
-        await new Promise(resolve => logStream.on('finish', resolve));
-        
-        process.exit(0);
+        // Tentar encerramento gracioso
+        server.close(() => {
+            logger.info('Servidor fechado normalmente');
+            process.exit(0);
+        });
     } catch (err) {
-        logger.error(`Erro durante shutdown:`, err);
+        logger.error('Erro no shutdown:', err);
         process.exit(1);
     }
 }
