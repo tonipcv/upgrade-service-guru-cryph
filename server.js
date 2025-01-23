@@ -19,44 +19,35 @@ if (!fs.existsSync(logDir)){
 const logStream = fs.createWriteStream(path.join(logDir, 'app.log'), { flags: 'a' });
 
 // Função helper para log
-function log(message, type = 'info') {
+function writeLog(level, ...args) {
     const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] [${type}] ${message}\n`;
+    const message = args.map(arg => 
+        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg
+    ).join(' ');
     
-    // Log para console
-    console.log(logMessage);
+    const logMessage = `[${timestamp}] [${level}] ${message}\n`;
     
-    // Log para arquivo
+    // Log direto para console e arquivo
+    process.stdout.write(logMessage);
     logStream.write(logMessage);
 }
 
-// Substituir console.log/error com nossa função de log
-const originalConsoleLog = console.log;
-const originalConsoleError = console.error;
-
-console.log = (...args) => {
-    const message = args.map(arg => 
-        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg
-    ).join(' ');
-    log(message, 'INFO');
-    originalConsoleLog.apply(console, args);
+// Sistema de logging simplificado
+const logger = {
+    info: (...args) => writeLog('INFO', ...args),
+    error: (...args) => writeLog('ERROR', ...args),
+    warn: (...args) => writeLog('WARN', ...args),
+    debug: (...args) => writeLog('DEBUG', ...args)
 };
 
-console.error = (...args) => {
-    const message = args.map(arg => 
-        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg
-    ).join(' ');
-    log(message, 'ERROR');
-    originalConsoleError.apply(console, args);
-};
-
-// Log das variáveis de ambiente (remova em produção)
-console.log('Ambiente:', {
-  NODE_ENV: process.env.NODE_ENV,
-  DATABASE_URL: process.env.DATABASE_URL?.substring(0, 20) + '...',
-  DIGITAL_GURU_ACCOUNT_TOKEN: process.env.DIGITAL_GURU_ACCOUNT_TOKEN ? 'Set' : 'Not Set',
-  DIGITAL_GURU_USER_TOKEN: process.env.DIGITAL_GURU_USER_TOKEN ? 'Set' : 'Not Set',
-  PORT: process.env.PORT
+// Log inicial
+logger.info('Iniciando servidor...');
+logger.info('Ambiente:', {
+    NODE_ENV: process.env.NODE_ENV,
+    DATABASE_URL: process.env.DATABASE_URL?.substring(0, 20) + '...',
+    DIGITAL_GURU_ACCOUNT_TOKEN: process.env.DIGITAL_GURU_ACCOUNT_TOKEN ? 'Set' : 'Not Set',
+    DIGITAL_GURU_USER_TOKEN: process.env.DIGITAL_GURU_USER_TOKEN ? 'Set' : 'Not Set',
+    PORT: process.env.PORT
 });
 
 // Configuração do Digital Guru
@@ -78,7 +69,7 @@ const digitalGuruApi = axios.create({
 // Função melhorada para debug
 async function getAsaasCustomer(customerId) {
   try {
-    console.log('Fazendo requisição para Asaas:', {
+    logger.info('Fazendo requisição para Asaas:', {
       url: `${ASAAS_API_URL}/customers/${customerId}`,
       headers: {
         'access_token': ASAAS_API_KEY
@@ -88,7 +79,7 @@ async function getAsaasCustomer(customerId) {
     const response = await asaasApi.get(`/customers/${customerId}`);
     return response.data;
   } catch (error) {
-    console.error('Erro ao buscar cliente no Asaas:', {
+    logger.error('Erro ao buscar cliente no Asaas:', {
       status: error.response?.status,
       data: error.response?.data,
       customerId,
@@ -104,14 +95,14 @@ async function getAsaasCustomer(customerId) {
 }
 
 app.post('/webhook/asaas', async (req, res) => {
-  console.log('Requisição recebida no webhook');
+  logger.info('Requisição recebida no webhook');
   try {
     const { event, payment, subscription } = req.body;
-    console.log('Webhook recebido:', { event, payment, subscription });
+    logger.info('Webhook recebido:', { event, payment, subscription });
 
     // Validar dados recebidos
     if (!event || (!payment && !subscription)) {
-      console.log('Dados inválidos recebidos:', req.body);
+      logger.info('Dados inválidos recebidos:', req.body);
       return res.status(400).send('Dados inválidos');
     }
 
@@ -120,13 +111,13 @@ app.post('/webhook/asaas', async (req, res) => {
     const customer = await getAsaasCustomer(customerId);
     
     if (!customer) {
-      console.log(`Cliente não encontrado no Asaas: ${customerId}`);
+      logger.info(`Cliente não encontrado no Asaas: ${customerId}`);
       return res.status(404).send('Cliente não encontrado');
     }
 
     // Usar o email do cliente do Asaas diretamente
     const userEmail = customer.email;
-    console.log('Email do usuário para busca:', userEmail);
+    logger.info('Email do usuário para busca:', userEmail);
 
     // Verificar se existe usuário com este email
     const existingUser = await prisma.user.findUnique({
@@ -135,11 +126,11 @@ app.post('/webhook/asaas', async (req, res) => {
     });
     
     if (!existingUser) {
-      console.log(`Nenhum usuário encontrado com email: ${userEmail}`);
+      logger.info(`Nenhum usuário encontrado com email: ${userEmail}`);
       return res.status(404).send('Usuário não encontrado');
     }
 
-    console.log('Usuário encontrado:', existingUser);
+    logger.info('Usuário encontrado:', existingUser);
 
     // Determinar novo status de assinatura baseado no evento
     let subscriptionStatus = 'free';
@@ -166,7 +157,7 @@ app.post('/webhook/asaas', async (req, res) => {
             subscriptionId
           },
         });
-        console.log(`Usuário ${userEmail} atualizado para premium:`, updatedUser);
+        logger.info(`Usuário ${userEmail} atualizado para premium:`, updatedUser);
         break;
 
       // Eventos de cancelamento ou problema
@@ -187,22 +178,22 @@ app.post('/webhook/asaas', async (req, res) => {
             subscriptionId: null
           },
         });
-        console.log(`Usuário ${userEmail} retornado para free`);
+        logger.info(`Usuário ${userEmail} retornado para free`);
         break;
 
       // Eventos informativos que não alteram status
       case 'SUBSCRIPTION_UPDATED':
       case 'SUBSCRIPTION_SPLIT_DISABLED':
       case 'SUBSCRIPTION_SPLIT_DIVERGENCE_BLOCK_FINISHED':
-        console.log(`Evento informativo recebido: ${event}`);
-        console.log('Dados do evento:', { subscription });
+        logger.info(`Evento informativo recebido: ${event}`);
+        logger.info('Dados do evento:', { subscription });
         break;
 
       default:
-        console.log(`Evento não tratado: ${event}`);
+        logger.info(`Evento não tratado: ${event}`);
     }
 
-    console.log('Dados finais:', {
+    logger.info('Dados finais:', {
       customer: {
         name: customer.name,
         email: customer.email,
@@ -215,37 +206,37 @@ app.post('/webhook/asaas', async (req, res) => {
 
     res.status(200).send('Webhook processado com sucesso');
   } catch (error) {
-    console.error('Erro ao processar webhook:', error);
+    logger.error('Erro ao processar webhook:', error);
     res.status(500).send('Erro no servidor');
   }
 });
 
 app.post('/webhook/digitalguru', async (req, res) => {
-  console.log('Requisição recebida no webhook Digital Guru');
+  logger.info('Requisição recebida no webhook Digital Guru');
   try {
     // Validar Account Token
     const receivedToken = req.headers['x-account-token'];
     if (receivedToken !== DIGITAL_GURU_ACCOUNT_TOKEN) {
-      console.log('Token de conta inválido');
+      logger.info('Token de conta inválido');
       return res.status(401).send('Token inválido');
     }
 
     const { event, data } = req.body;
-    console.log('Webhook recebido:', { event, data });
+    logger.info('Webhook recebido:', { event, data });
 
     // Validar dados recebidos
     if (!event || !data) {
-      console.log('Dados inválidos recebidos:', req.body);
+      logger.info('Dados inválidos recebidos:', req.body);
       return res.status(400).send('Dados inválidos');
     }
 
     const userEmail = data.customer?.email;
     if (!userEmail) {
-      console.log('Email do cliente não encontrado nos dados');
+      logger.info('Email do cliente não encontrado nos dados');
       return res.status(400).send('Email do cliente não encontrado');
     }
 
-    console.log('Email do usuário para busca:', userEmail);
+    logger.info('Email do usuário para busca:', userEmail);
 
     // Verificar se existe usuário com este email
     const existingUser = await prisma.user.findUnique({
@@ -254,11 +245,11 @@ app.post('/webhook/digitalguru', async (req, res) => {
     });
     
     if (!existingUser) {
-      console.log(`Nenhum usuário encontrado com email: ${userEmail}`);
+      logger.info(`Nenhum usuário encontrado com email: ${userEmail}`);
       return res.status(404).send('Usuário não encontrado');
     }
 
-    console.log('Usuário encontrado:', existingUser);
+    logger.info('Usuário encontrado:', existingUser);
 
     // Determinar novo status de assinatura baseado no evento
     let subscriptionStatus = 'free';
@@ -288,7 +279,7 @@ app.post('/webhook/digitalguru', async (req, res) => {
             subscriptionId
           },
         });
-        console.log(`Usuário ${userEmail} atualizado para premium:`, updatedUser);
+        logger.info(`Usuário ${userEmail} atualizado para premium:`, updatedUser);
         break;
 
       // Eventos de cancelamento ou problema
@@ -307,14 +298,14 @@ app.post('/webhook/digitalguru', async (req, res) => {
             subscriptionId: null
           },
         });
-        console.log(`Usuário ${userEmail} retornado para free`);
+        logger.info(`Usuário ${userEmail} retornado para free`);
         break;
 
       default:
-        console.log(`Evento não tratado: ${event}`);
+        logger.info(`Evento não tratado: ${event}`);
     }
 
-    console.log('Dados finais:', {
+    logger.info('Dados finais:', {
       customer: {
         email: userEmail
       },
@@ -325,7 +316,7 @@ app.post('/webhook/digitalguru', async (req, res) => {
 
     res.status(200).send('Webhook processado com sucesso');
   } catch (error) {
-    console.error('Erro ao processar webhook:', error);
+    logger.error('Erro ao processar webhook:', error);
     res.status(500).send('Erro no servidor');
   }
 });
@@ -333,12 +324,12 @@ app.post('/webhook/digitalguru', async (req, res) => {
 app.get('/test-user', async (req, res) => {
   try {
     const email = req.query.email;
-    console.log('Procurando usuário com email:', email);
+    logger.info('Procurando usuário com email:', email);
     
     const allUsers = await prisma.user.findMany({
       select: { id: true, email: true }
     });
-    console.log('Todos os usuários:', allUsers);
+    logger.info('Todos os usuários:', allUsers);
     
     const user = await prisma.user.findUnique({
       where: { email: email }
@@ -350,7 +341,7 @@ app.get('/test-user', async (req, res) => {
       res.json({ found: false, message: 'Usuário não encontrado', allUsers });
     }
   } catch (error) {
-    console.error('Erro:', error);
+    logger.error('Erro:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -360,7 +351,7 @@ app.get('/test-db', async (req, res) => {
     const count = await prisma.user.count();
     res.json({ message: 'Conexão com banco OK', userCount: count });
   } catch (error) {
-    console.error('Erro de conexão com banco:', error);
+    logger.error('Erro de conexão com banco:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -451,46 +442,46 @@ app.get('/', (req, res) => {
 });
 
 const server = app.listen(port, () => {
-  console.log(`Servidor rodando na porta ${port}`);
-  console.log(`Ambiente: ${process.env.NODE_ENV}`);
+  logger.info(`Servidor rodando na porta ${port}`);
+  logger.info(`Ambiente: ${process.env.NODE_ENV}`);
 });
 
 let isShuttingDown = false;
 
 // Gerenciamento gracioso de encerramento
 async function shutdown(signal) {
-    log(`Recebido sinal: ${signal}`, 'SHUTDOWN');
+    logger.info(`Recebido sinal: ${signal}`);
     
     if (isShuttingDown) {
-        log('Shutdown já em andamento...', 'SHUTDOWN');
+        logger.info('Shutdown já em andamento...');
         return;
     }
     
     isShuttingDown = true;
-    log('Iniciando processo de shutdown...', 'SHUTDOWN');
+    logger.info('Iniciando processo de shutdown...');
     
     try {
         // Log do estado atual
-        log('Estado atual do servidor:', 'SHUTDOWN');
-        log(`- Conexões ativas: ${server.connections}`, 'SHUTDOWN');
-        log(`- Memória: ${JSON.stringify(process.memoryUsage())}`, 'SHUTDOWN');
+        logger.info('Estado atual do servidor:');
+        logger.info(`- Conexões ativas: ${server.connections}`);
+        logger.info(`- Memória:`, process.memoryUsage());
         
         // Fechar servidor HTTP
         server.close(() => {
-            log('Servidor HTTP fechado com sucesso', 'SHUTDOWN');
+            logger.info('Servidor HTTP fechado com sucesso');
         });
         
         // Aguardar conexões finalizarem
-        log('Aguardando conexões existentes...', 'SHUTDOWN');
+        logger.info('Aguardando conexões existentes...');
         await new Promise(resolve => setTimeout(resolve, 5000));
         
         // Desconectar Prisma
-        log('Desconectando Prisma...', 'SHUTDOWN');
+        logger.info('Desconectando Prisma...');
         await prisma.$disconnect();
-        log('Prisma desconectado com sucesso', 'SHUTDOWN');
+        logger.info('Prisma desconectado com sucesso');
         
         // Fechar arquivo de log
-        log('Finalizando logs...', 'SHUTDOWN');
+        logger.info('Finalizando logs...');
         logStream.end();
         
         // Aguardar logs serem escritos
@@ -498,7 +489,7 @@ async function shutdown(signal) {
         
         process.exit(0);
     } catch (err) {
-        log(`Erro durante shutdown: ${err.stack || err}`, 'ERROR');
+        logger.error(`Erro durante shutdown:`, err);
         process.exit(1);
     }
 }
@@ -509,12 +500,12 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Handler para erros não tratados
 process.on('uncaughtException', (err) => {
-  console.error('Erro não tratado:', err);
+  logger.error('Erro não tratado:', err);
   shutdown('uncaughtException');
 });
 
 process.on('unhandledRejection', (err) => {
-  console.error('Promise rejection não tratada:', err);
+  logger.error('Promise rejection não tratada:', err);
   shutdown('unhandledRejection');
 });
 
