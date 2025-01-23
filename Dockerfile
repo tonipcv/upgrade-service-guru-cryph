@@ -1,5 +1,5 @@
-# Usar debian slim ao invés de alpine
-FROM node:18-slim
+# Usar uma versão mais antiga do Debian (Bullseye)
+FROM node:18-bullseye-slim
 
 # Instalar dependências necessárias
 RUN apt-get update && apt-get install -y \
