@@ -1,15 +1,19 @@
-# Usar Alpine com OpenSSL 1.1
-FROM node:18-alpine
+# Usar Debian 11 (Bullseye) que tem libssl1.1
+FROM debian:11-slim
 
-# Instalar dependências necessárias
-RUN apk add --no-cache \
-    openssl \
-    openssl-dev \
-    libc6-compat \
-    make \
-    gcc \
-    g++ \
-    python3
+# Evitar prompts interativos durante a instalação
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Instalar Node.js e dependências
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    libssl1.1 \
+    ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -17,8 +21,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Instalar dependências com flags específicas para o Prisma
-ENV PRISMA_CLI_BINARY_TARGETS=linux-musl
+# Instalar dependências
 RUN npm install
 
 # Copiar código fonte
@@ -26,9 +29,6 @@ COPY . .
 
 # Gerar Prisma Client
 RUN npx prisma generate
-
-# Limpar dependências de desenvolvimento
-RUN apk del openssl-dev make gcc g++ python3
 
 # Expor porta
 EXPOSE 3000
