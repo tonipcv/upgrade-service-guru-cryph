@@ -7,16 +7,46 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  log: ['error', 'warn'],
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL
+    }
+  },
+  // Adicionar retry para conexões perdidas
+  __internal: {
+    engine: {
+      connectionTimeout: 5000,
+      retry: {
+        maxRetries: 3,
+        initialDelay: 100
+      }
+    }
+  }
+});
 const port = process.env.PORT || 80;
 
 // Configurar logs
-const logDir = '/app/logs';
-if (!fs.existsSync(logDir)){
-    fs.mkdirSync(logDir);
-}
+const logDir = process.env.NODE_ENV === 'production' ? '/app/logs' : './logs';
+let logStream;
 
-const logStream = fs.createWriteStream(path.join(logDir, 'app.log'), { flags: 'a' });
+try {
+    // Tentar criar diretório de logs
+    if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+    }
+    
+    // Se chegou aqui, diretório existe ou foi criado com sucesso
+    logStream = fs.createWriteStream(path.join(logDir, 'app.log'), { flags: 'a' });
+} catch (err) {
+    console.warn(`Não foi possível configurar logs em arquivo (${logDir}):`, err);
+    // Fallback para console apenas
+    logStream = {
+        write: (message) => process.stdout.write(message),
+        end: (cb) => cb && cb()
+    };
+}
 
 // Função helper para log
 function writeLog(level, ...args) {
@@ -27,9 +57,13 @@ function writeLog(level, ...args) {
     
     const logMessage = `[${timestamp}] [${level}] ${message}\n`;
     
-    // Log direto para console e arquivo
-    process.stdout.write(logMessage);
-    logStream.write(logMessage);
+    try {
+        // Log para arquivo/console
+        logStream.write(logMessage);
+    } catch (err) {
+        // Fallback direto para console se algo der errado
+        process.stdout.write(logMessage);
+    }
 }
 
 // Sistema de logging simplificado
@@ -360,13 +394,26 @@ app.get('/ping', (req, res) => {
   res.json({ message: 'pong' });
 });
 
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    service: 'cryph-webhook',
-    database: 'connected'
-  });
+app.get('/health', async (req, res) => {
+  try {
+    // Verificar conexão com banco
+    await prisma.$queryRaw`SELECT 1`;
+    
+    res.status(200).json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      service: 'cryph-webhook',
+      database: 'connected',
+      uptime: process.uptime()
+    });
+  } catch (error) {
+    logger.error('Erro no health check:', error);
+    res.status(503).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: 'Database connection failed'
+    });
+  }
 });
 
 // Rota para simular eventos do webhook Digital Guru
@@ -452,25 +499,43 @@ let isShuttingDown = false;
 async function shutdown(signal) {
     logger.info(`Recebido sinal: ${signal}`);
     
+    if (isShuttingDown) {
+        logger.info('Shutdown já em andamento...');
+        return;
+    }
+    
+    isShuttingDown = true;
+    
     try {
-        // Desconectar Prisma imediatamente
+        // Primeiro fecha o servidor para não receber novas requisições
+        await new Promise((resolve) => {
+            server.close(resolve);
+            logger.info('Servidor HTTP fechado');
+        });
+
+        // Depois desconecta o Prisma
         await prisma.$disconnect();
         logger.info('Prisma desconectado');
-        
-        // Forçar encerramento após 10 segundos
-        setTimeout(() => {
-            logger.info('Forçando encerramento');
-            process.exit(0);
-        }, 10000);
-        
-        // Tentar encerramento gracioso
-        server.close(() => {
-            logger.info('Servidor fechado normalmente');
-            process.exit(0);
-        });
+
+        // Reconectar após um breve delay
+        setTimeout(async () => {
+            try {
+                // Reconectar Prisma
+                await prisma.$connect();
+                logger.info('Prisma reconectado');
+                
+                // Recriar servidor
+                server.listen(port, () => {
+                    logger.info('Servidor reiniciado na porta', port);
+                    isShuttingDown = false;
+                });
+            } catch (err) {
+                logger.error('Erro ao reconectar:', err);
+            }
+        }, 1000);
     } catch (err) {
         logger.error('Erro no shutdown:', err);
-        process.exit(1);
+        isShuttingDown = false;
     }
 }
 
@@ -489,5 +554,10 @@ process.on('unhandledRejection', (err) => {
   shutdown('unhandledRejection');
 });
 
-// Manter o processo vivo
-process.stdin.resume(); 
+// Adicionar middleware de erro global
+app.use((err, req, res, next) => {
+  logger.error('Erro na aplicação:', err);
+  res.status(500).json({ 
+    error: process.env.NODE_ENV === 'production' ? 'Erro interno' : err.message 
+  });
+}); 
