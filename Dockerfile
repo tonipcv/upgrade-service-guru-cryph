@@ -1,10 +1,17 @@
-# Usar uma versão mais antiga do Debian (Bullseye)
-FROM node:18-bullseye-slim
+# Usar Ubuntu como base
+FROM ubuntu:20.04
 
-# Instalar dependências necessárias
+# Evitar prompts interativos durante a instalação
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Instalar Node.js, curl e dependências
 RUN apt-get update && apt-get install -y \
+    curl \
     openssl \
     libssl1.1 \
+    ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
