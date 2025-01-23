@@ -1,5 +1,8 @@
 FROM node:18-alpine
 
+# Instalar dependências necessárias incluindo openssl
+RUN apk add --no-cache openssl openssl-dev libc6-compat
+
 WORKDIR /app
 
 # Copiar arquivos de dependências
