@@ -6,13 +6,23 @@ const axios = require('axios');
 
 const app = express();
 const prisma = new PrismaClient();
+const port = process.env.PORT || 80;
+
+// Log das variáveis de ambiente (remova em produção)
+console.log('Ambiente:', {
+  NODE_ENV: process.env.NODE_ENV,
+  DATABASE_URL: process.env.DATABASE_URL?.substring(0, 20) + '...',
+  DIGITAL_GURU_ACCOUNT_TOKEN: process.env.DIGITAL_GURU_ACCOUNT_TOKEN ? 'Set' : 'Not Set',
+  DIGITAL_GURU_USER_TOKEN: process.env.DIGITAL_GURU_USER_TOKEN ? 'Set' : 'Not Set',
+  PORT: process.env.PORT
+});
 
 // Configuração do Digital Guru
 const DIGITAL_GURU_ACCOUNT_TOKEN = process.env.DIGITAL_GURU_ACCOUNT_TOKEN;
 const DIGITAL_GURU_USER_TOKEN = process.env.DIGITAL_GURU_USER_TOKEN;
 const DIGITAL_GURU_API_URL = 'https://api.digitalmanager.guru/v2';
 
-app.use(bodyParser.json());
+app.use(express.json());
 
 // Configurar cliente axios para Digital Guru
 const digitalGuruApi = axios.create({
@@ -394,8 +404,11 @@ app.get('/check-subscription/:email', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-  console.log('Ambiente:', process.env.NODE_ENV);
+app.get('/', (req, res) => {
+  res.send('Server is running');
+});
+
+app.listen(port, () => {
+  console.log(`Servidor rodando na porta ${port}`);
+  console.log(`Ambiente: ${process.env.NODE_ENV}`);
 }); 

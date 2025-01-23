@@ -8,7 +8,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "dev": "node --inspect server.js",
+    "build": "prisma generate"
   },
   "keywords": [],
   "author": "",
