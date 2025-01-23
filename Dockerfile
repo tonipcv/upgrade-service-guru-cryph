@@ -1,7 +1,11 @@
-FROM node:18-alpine
+# Usar debian slim ao invés de alpine
+FROM node:18-slim
 
-# Instalar dependências necessárias incluindo openssl
-RUN apk add --no-cache openssl openssl-dev libc6-compat
+# Instalar dependências necessárias
+RUN apt-get update && apt-get install -y \
+    openssl \
+    libssl1.1 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
