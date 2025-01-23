@@ -7,18 +7,19 @@ const axios = require('axios');
 const app = express();
 const prisma = new PrismaClient();
 
-// Configuração do Asaas
-const ASAAS_API_KEY = process.env.ASAAS_API_KEY;
-const ASAAS_API_URL = 'https://sandbox.asaas.com/api/v3'; // ou https://api.asaas.com/v3 para produção
+// Configuração do Digital Guru
+const DIGITAL_GURU_ACCOUNT_TOKEN = process.env.DIGITAL_GURU_ACCOUNT_TOKEN;
+const DIGITAL_GURU_USER_TOKEN = process.env.DIGITAL_GURU_USER_TOKEN;
+const DIGITAL_GURU_API_URL = 'https://api.digitalmanager.guru/v2';
 
 app.use(bodyParser.json());
 
-// Atualizar a configuração do Axios para o Asaas
-const asaasApi = axios.create({
-  baseURL: ASAAS_API_URL,
+// Configurar cliente axios para Digital Guru
+const digitalGuruApi = axios.create({
+  baseURL: DIGITAL_GURU_API_URL,
   headers: {
     'Content-Type': 'application/json',
-    'access_token': ASAAS_API_KEY
+    'Authorization': `Bearer ${DIGITAL_GURU_USER_TOKEN}`
   }
 });
 
@@ -167,6 +168,116 @@ app.post('/webhook/asaas', async (req, res) => {
   }
 });
 
+app.post('/webhook/digitalguru', async (req, res) => {
+  console.log('Requisição recebida no webhook Digital Guru');
+  try {
+    // Validar Account Token
+    const receivedToken = req.headers['x-account-token'];
+    if (receivedToken !== DIGITAL_GURU_ACCOUNT_TOKEN) {
+      console.log('Token de conta inválido');
+      return res.status(401).send('Token inválido');
+    }
+
+    const { event, data } = req.body;
+    console.log('Webhook recebido:', { event, data });
+
+    // Validar dados recebidos
+    if (!event || !data) {
+      console.log('Dados inválidos recebidos:', req.body);
+      return res.status(400).send('Dados inválidos');
+    }
+
+    const userEmail = data.customer?.email;
+    if (!userEmail) {
+      console.log('Email do cliente não encontrado nos dados');
+      return res.status(400).send('Email do cliente não encontrado');
+    }
+
+    console.log('Email do usuário para busca:', userEmail);
+
+    // Verificar se existe usuário com este email
+    const existingUser = await prisma.user.findUnique({
+      where: { email: userEmail.toLowerCase() },
+      select: { id: true, email: true, subscriptionStatus: true }
+    });
+    
+    if (!existingUser) {
+      console.log(`Nenhum usuário encontrado com email: ${userEmail}`);
+      return res.status(404).send('Usuário não encontrado');
+    }
+
+    console.log('Usuário encontrado:', existingUser);
+
+    // Determinar novo status de assinatura baseado no evento
+    let subscriptionStatus = 'free';
+    let subscriptionEndDate = null;
+    let subscriptionId = null;
+
+    // Priorizar eventos por importância
+    switch (event) {
+      // Eventos de pagamento confirmado
+      case 'SUBSCRIPTION_CREATED':
+      case 'SUBSCRIPTION_RENEWED':
+      case 'PAYMENT_CONFIRMED':
+        subscriptionStatus = 'premium';
+        // Calcular data de término baseado no plano
+        const planDuration = data.subscription?.plan?.duration || 12; // duração em meses
+        const startDate = new Date(data.subscription?.startDate || new Date());
+        subscriptionEndDate = new Date(startDate);
+        subscriptionEndDate.setMonth(subscriptionEndDate.getMonth() + planDuration);
+        subscriptionId = data.subscription?.id;
+        
+        // Atualizar usuário para premium
+        const updatedUser = await prisma.user.update({
+          where: { email: userEmail.toLowerCase() },
+          data: {
+            subscriptionStatus,
+            subscriptionEndDate,
+            subscriptionId
+          },
+        });
+        console.log(`Usuário ${userEmail} atualizado para premium:`, updatedUser);
+        break;
+
+      // Eventos de cancelamento ou problema
+      case 'SUBSCRIPTION_CANCELLED':
+      case 'SUBSCRIPTION_EXPIRED':
+      case 'PAYMENT_OVERDUE':
+      case 'PAYMENT_FAILED':
+        subscriptionStatus = 'free';
+        
+        // Atualizar usuário para free
+        await prisma.user.update({
+          where: { email: userEmail.toLowerCase() },
+          data: {
+            subscriptionStatus,
+            subscriptionEndDate: null,
+            subscriptionId: null
+          },
+        });
+        console.log(`Usuário ${userEmail} retornado para free`);
+        break;
+
+      default:
+        console.log(`Evento não tratado: ${event}`);
+    }
+
+    console.log('Dados finais:', {
+      customer: {
+        email: userEmail
+      },
+      event,
+      status: subscriptionStatus,
+      endDate: subscriptionEndDate
+    });
+
+    res.status(200).send('Webhook processado com sucesso');
+  } catch (error) {
+    console.error('Erro ao processar webhook:', error);
+    res.status(500).send('Erro no servidor');
+  }
+});
+
 app.get('/test-user', async (req, res) => {
   try {
     const email = req.query.email;
@@ -215,7 +326,94 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Rota para simular eventos do webhook Digital Guru
+app.post('/test-webhook', async (req, res) => {
+  try {
+    const testEvent = {
+      event: req.body.event || 'SUBSCRIPTION_CREATED',
+      data: {
+        customer: {
+          email: req.body.email || 'test@example.com'
+        },
+        subscription: {
+          id: 'test_sub_' + Date.now(),
+          plan: {
+            duration: req.body.duration || 12
+          },
+          startDate: new Date().toISOString()
+        }
+      }
+    };
+
+    // Simular chamada ao webhook
+    const response = await axios.post('http://localhost:3000/webhook/digitalguru', testEvent, {
+      headers: {
+        'x-account-token': DIGITAL_GURU_ACCOUNT_TOKEN
+      }
+    });
+
+    res.json({
+      success: true,
+      sentEvent: testEvent,
+      response: response.data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Rota para verificar status da assinatura
+app.get('/check-subscription/:email', async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email: req.params.email.toLowerCase() },
+      select: {
+        email: true,
+        subscriptionStatus: true,
+        subscriptionEndDate: true,
+        subscriptionId: true
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    res.json({
+      user,
+      isActive: user.subscriptionStatus === 'premium',
+      daysRemaining: user.subscriptionEndDate ? 
+        Math.ceil((new Date(user.subscriptionEndDate) - new Date()) / (1000 * 60 * 60 * 24)) : 
+        0
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
+  console.log('Ambiente:', process.env.NODE_ENV);
+  
+  // Remover inicialização do ngrok em produção
+  if (process.env.NODE_ENV === 'development') {
+    try {
+      const ngrok = require('ngrok');
+      const url = await ngrok.connect(PORT);
+      console.log(`
+        🚀 Servidor disponível externamente em: ${url}
+        
+        Use estas URLs para teste:
+        - Webhook Digital Guru: ${url}/webhook/digitalguru
+        - Testar webhook: ${url}/test-webhook
+        - Verificar assinatura: ${url}/check-subscription/[email]
+      `);
+    } catch (error) {
+      console.error('Erro ao iniciar ngrok:', error);
+    }
+  }
 }); 

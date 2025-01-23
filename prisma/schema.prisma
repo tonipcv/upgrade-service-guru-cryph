@@ -10,7 +10,7 @@ datasource db {
 model User {
   id                     String      @id @default(cuid())
   name                   String?
-  email                  String?     @unique
+  email                  String    @unique
   password               String?
   emailVerified          DateTime?
   image                  String?
@@ -19,9 +19,9 @@ model User {
   resetToken             String?
   resetTokenExpiry       DateTime?
   stripeCustomerId       String?     @unique
-  subscriptionStatus     String?     @default("free")
-  subscriptionId         String?
+  subscriptionStatus     String    @default("free")
   subscriptionEndDate    DateTime?
+  subscriptionId         String?
   whatsapp               String?     @unique
   whatsappVerified       Boolean     @default(false)
   verificationCode       String?

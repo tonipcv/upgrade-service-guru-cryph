@@ -22,6 +22,7 @@
     "express": "4.21.2"
   },
   "devDependencies": {
+    "ngrok": "^5.0.0-beta.2",
     "prisma": "5.8.0"
   }
 }
