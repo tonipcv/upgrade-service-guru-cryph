@@ -1,18 +1,10 @@
-# Usar Ubuntu como base
-FROM ubuntu:20.04
+# Usar Alpine com OpenSSL 1.1
+FROM node:18-alpine3.14
 
-# Evitar prompts interativos durante a instalação
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Instalar Node.js, curl e dependências
-RUN apt-get update && apt-get install -y \
-    curl \
-    openssl \
-    libssl1.1 \
-    ca-certificates \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# Instalar dependências necessárias
+RUN apk add --no-cache \
+    openssl1.1-compat \
+    libc6-compat
 
 WORKDIR /app
 
