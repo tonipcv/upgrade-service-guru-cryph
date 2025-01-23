@@ -398,22 +398,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   console.log('Ambiente:', process.env.NODE_ENV);
-  
-  // Remover inicialização do ngrok em produção
-  if (process.env.NODE_ENV === 'development') {
-    try {
-      const ngrok = require('ngrok');
-      const url = await ngrok.connect(PORT);
-      console.log(`
-        🚀 Servidor disponível externamente em: ${url}
-        
-        Use estas URLs para teste:
-        - Webhook Digital Guru: ${url}/webhook/digitalguru
-        - Testar webhook: ${url}/test-webhook
-        - Verificar assinatura: ${url}/check-subscription/[email]
-      `);
-    } catch (error) {
-      console.error('Erro ao iniciar ngrok:', error);
-    }
-  }
 }); 
