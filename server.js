@@ -413,38 +413,53 @@ const server = app.listen(port, () => {
   console.log(`Ambiente: ${process.env.NODE_ENV}`);
 });
 
+let isShuttingDown = false;
+
 // Gerenciamento gracioso de encerramento
-async function shutdown() {
-  console.log('Iniciando encerramento gracioso...');
+async function shutdown(signal) {
+  if (isShuttingDown) {
+    console.log('Shutdown já em andamento...');
+    return;
+  }
   
-  // Fecha o servidor HTTP primeiro
+  isShuttingDown = true;
+  console.log(`Iniciando encerramento gracioso... (Signal: ${signal})`);
+  
+  // Parar de aceitar novas conexões
   server.close(() => {
     console.log('Servidor HTTP fechado.');
   });
 
   try {
+    // Aguardar um tempo para conexões existentes finalizarem
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
     // Fecha a conexão do Prisma
     await prisma.$disconnect();
     console.log('Conexão Prisma fechada.');
     
+    console.log('Encerramento gracioso concluído.');
     process.exit(0);
   } catch (err) {
-    console.error('Erro ao desconectar Prisma:', err);
+    console.error('Erro durante shutdown:', err);
     process.exit(1);
   }
 }
 
 // Handlers para sinais de término
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Handler para erros não tratados
 process.on('uncaughtException', (err) => {
   console.error('Erro não tratado:', err);
-  shutdown();
+  shutdown('uncaughtException');
 });
 
 process.on('unhandledRejection', (err) => {
   console.error('Promise rejection não tratada:', err);
-  shutdown();
-}); 
+  shutdown('unhandledRejection');
+});
+
+// Manter o processo vivo
+process.stdin.resume(); 

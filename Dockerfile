@@ -4,12 +4,13 @@ FROM debian:11-slim
 # Evitar prompts interativos durante a instalação
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Instalar Node.js e dependências
+# Instalar Node.js, tini e dependências
 RUN apt-get update && apt-get install -y \
     curl \
     gnupg \
     libssl1.1 \
     ca-certificates \
+    tini \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
     && apt-get clean \
@@ -33,5 +34,8 @@ RUN npx prisma generate
 # Expor porta
 EXPOSE 3000
 
+# Usar tini como entrypoint
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
 # Comando para iniciar
-CMD ["npm", "start"] 
+CMD ["node", "server.js"] 
