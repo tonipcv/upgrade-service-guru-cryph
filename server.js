@@ -3,10 +3,52 @@ const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const bodyParser = require('body-parser');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const prisma = new PrismaClient();
 const port = process.env.PORT || 80;
+
+// Configurar logs
+const logDir = '/app/logs';
+if (!fs.existsSync(logDir)){
+    fs.mkdirSync(logDir);
+}
+
+const logStream = fs.createWriteStream(path.join(logDir, 'app.log'), { flags: 'a' });
+
+// Função helper para log
+function log(message, type = 'info') {
+    const timestamp = new Date().toISOString();
+    const logMessage = `[${timestamp}] [${type}] ${message}\n`;
+    
+    // Log para console
+    console.log(logMessage);
+    
+    // Log para arquivo
+    logStream.write(logMessage);
+}
+
+// Substituir console.log/error com nossa função de log
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+
+console.log = (...args) => {
+    const message = args.map(arg => 
+        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg
+    ).join(' ');
+    log(message, 'INFO');
+    originalConsoleLog.apply(console, args);
+};
+
+console.error = (...args) => {
+    const message = args.map(arg => 
+        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg
+    ).join(' ');
+    log(message, 'ERROR');
+    originalConsoleError.apply(console, args);
+};
 
 // Log das variáveis de ambiente (remova em produção)
 console.log('Ambiente:', {
@@ -417,33 +459,48 @@ let isShuttingDown = false;
 
 // Gerenciamento gracioso de encerramento
 async function shutdown(signal) {
-  if (isShuttingDown) {
-    console.log('Shutdown já em andamento...');
-    return;
-  }
-  
-  isShuttingDown = true;
-  console.log(`Iniciando encerramento gracioso... (Signal: ${signal})`);
-  
-  // Parar de aceitar novas conexões
-  server.close(() => {
-    console.log('Servidor HTTP fechado.');
-  });
-
-  try {
-    // Aguardar um tempo para conexões existentes finalizarem
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    log(`Recebido sinal: ${signal}`, 'SHUTDOWN');
     
-    // Fecha a conexão do Prisma
-    await prisma.$disconnect();
-    console.log('Conexão Prisma fechada.');
+    if (isShuttingDown) {
+        log('Shutdown já em andamento...', 'SHUTDOWN');
+        return;
+    }
     
-    console.log('Encerramento gracioso concluído.');
-    process.exit(0);
-  } catch (err) {
-    console.error('Erro durante shutdown:', err);
-    process.exit(1);
-  }
+    isShuttingDown = true;
+    log('Iniciando processo de shutdown...', 'SHUTDOWN');
+    
+    try {
+        // Log do estado atual
+        log('Estado atual do servidor:', 'SHUTDOWN');
+        log(`- Conexões ativas: ${server.connections}`, 'SHUTDOWN');
+        log(`- Memória: ${JSON.stringify(process.memoryUsage())}`, 'SHUTDOWN');
+        
+        // Fechar servidor HTTP
+        server.close(() => {
+            log('Servidor HTTP fechado com sucesso', 'SHUTDOWN');
+        });
+        
+        // Aguardar conexões finalizarem
+        log('Aguardando conexões existentes...', 'SHUTDOWN');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Desconectar Prisma
+        log('Desconectando Prisma...', 'SHUTDOWN');
+        await prisma.$disconnect();
+        log('Prisma desconectado com sucesso', 'SHUTDOWN');
+        
+        // Fechar arquivo de log
+        log('Finalizando logs...', 'SHUTDOWN');
+        logStream.end();
+        
+        // Aguardar logs serem escritos
+        await new Promise(resolve => logStream.on('finish', resolve));
+        
+        process.exit(0);
+    } catch (err) {
+        log(`Erro durante shutdown: ${err.stack || err}`, 'ERROR');
+        process.exit(1);
+    }
 }
 
 // Handlers para sinais de término

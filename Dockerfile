@@ -18,6 +18,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# Criar diretório de logs
+RUN mkdir -p /app/logs && chmod 777 /app/logs
+
 # Copiar arquivos de dependências
 COPY package*.json ./
 COPY prisma ./prisma/
